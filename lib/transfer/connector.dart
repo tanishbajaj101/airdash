@@ -2,16 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_peer/simple_peer.dart';
-import 'package:wakelock/wakelock.dart';
 
 import '../helpers.dart';
 import '../model/device.dart';
 import '../model/payload.dart';
-import '../reporting/analytics_logger.dart';
 import '../reporting/error_logger.dart';
 import '../reporting/logger.dart';
 import '../transfer/data_receiver.dart';
@@ -43,8 +42,8 @@ class Connector {
 
   Connector(this.localDevice, this.signaling);
 
-  static Connector create(Device localDevice, Peer peer) {
-    var signaling = Signaling();
+  static Connector create(Device localDevice, Peer peer, Ref ref) {
+    var signaling = ref.watch(signalingProvider);
     return Connector(localDevice, signaling);
   }
 
@@ -67,16 +66,8 @@ class Connector {
     activeTransferId = transferId;
 
     var payloadProps = await payloadProperties(payload);
-    AnalyticsEvent.sendingStarted.log(<String, dynamic>{
-      'Transfer ID': transferId,
-      ...remoteDeviceProperties(receiver),
-      ...payloadProps,
-    });
+
     try {
-      if (!Platform.isLinux && !Platform.isWindows) {
-        await Wakelock.enable();
-      }
-      logger('SENDER: Start transfer $transferId');
       await googlePing();
 
       if (payload is FilePayload) {
@@ -116,9 +107,6 @@ class Connector {
       sendError = error;
       rethrow;
     } finally {
-      if (!Platform.isLinux && !Platform.isWindows) {
-        await Wakelock.disable();
-      }
       List<String> connectionTypes = [];
       if (sender != null) {
         connectionTypes = await getConnectionTypes(sender.peer.connection);
@@ -133,16 +121,6 @@ class Connector {
             .invokeMethod<void>('endFileSending', <String, dynamic>{});
       }
       logger('SENDER: Connector cleaned up');
-
-      AnalyticsEvent.sendingCompleted.log(<String, dynamic>{
-        'Duration': DateTime.now().difference(startTime).inSeconds.abs(),
-        'Success': sendError == null,
-        'Transfer ID': transferId,
-        'Connection Types': connectionTypes,
-        if (sendError != null) ...errorProps(sendError),
-        ...remoteDeviceProperties(receiver),
-        ...payloadProps,
-      });
     }
   }
 
@@ -229,11 +207,6 @@ class Connector {
       return;
     }
 
-    AnalyticsEvent.receivingStarted.log(<String, dynamic>{
-      'Transfer ID': transferId,
-      ...remoteDeviceProperties(sender),
-    });
-
     Payload? receivePayload;
     Object? receiveError;
     Receiver? receiver;
@@ -242,9 +215,7 @@ class Connector {
       var peer = await Peer.create(
           config: config, dataChannelConfig: dcConfig, verbose: true);
       signal = peer.signal;
-      if (!Platform.isLinux && !Platform.isWindows) {
-        await Wakelock.enable();
-      }
+
       var messageSender =
           MessageSender(localDevice, remoteId, transferId, signaling);
       peer.onSignal = (info) {
@@ -283,22 +254,10 @@ class Connector {
         // Crashed when enabled but should be fixed
         //await receiver.peer.connection.close();
       }
-      if (!Platform.isLinux && !Platform.isWindows) {
-        await Wakelock.disable();
-      }
+
       activeTransferId = null;
       signaling.receivedMessages = <String, dynamic>{};
       logger('RECEIVER: Receiver cleanup finished');
-
-      AnalyticsEvent.receivingCompleted.log(<String, dynamic>{
-        'Success': receiveError == null,
-        'Remote Device ID': remoteId,
-        'Transfer ID': transferId,
-        'Connection Types': connectionTypes,
-        if (receiveError != null) ...errorProps(receiveError),
-        ...remoteDeviceProperties(sender),
-        if (receivePayload != null) ...await payloadProperties(receivePayload),
-      });
     }
   }
 

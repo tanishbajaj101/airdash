@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../helpers.dart';
 import '../model/device.dart';
-import '../reporting/analytics_logger.dart';
+
 import '../reporting/error_logger.dart';
 import '../reporting/logger.dart';
 
@@ -164,8 +164,6 @@ class PairingDialogState extends State<PairingDialog> {
   }
 
   Future<void> handlePairing() async {
-    AnalyticsEvent.pairingStarted.log();
-
     setState(() {
       statusMessage = 'Pairing...';
     });

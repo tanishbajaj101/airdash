@@ -6,7 +6,6 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 
 import '../config.dart';
 import '../helpers.dart';
-import 'analytics_logger.dart';
 
 class SentryManager {
   static Future<void> setup(SentryFlutterOptions options) async {
@@ -38,15 +37,6 @@ class SentryManager {
     // to avoid infinite recursions
     if (throwable is AnalyticsLogError) {
       print('SENTRY: Ignored posting analytics error ${throwable.type}');
-    } else {
-      // This caused recursion when was called on native error for some reason
-      AnalyticsEvent.errorLogged.log(<String, dynamic>{
-        'Logged': throwable is LogError,
-        'Type': type ?? 'native',
-        'Event ID': event.eventId.toString(),
-        'Error': throwable.toString(),
-        'Error Type': throwable.runtimeType.toString(),
-      });
     }
 
     return Config.sendErrorAndAnalyticsLogs ? event : null;

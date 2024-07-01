@@ -1,30 +1,18 @@
 import 'package:flutter/foundation.dart';
 
-import 'env.dart';
-
 class Config {
-  static final String? customPairingFunctionUrl =
-      _getEnv('__APP__PAIRING_FUNCTION_URL');
-  static final String firebaseApiKey = _getEnv('__APP__FIREBASE_API_KEY')!;
-  static final String firebaseProjectId =
-      _getEnv('__APP__FIREBASE_PROJECT_ID')!;
-  static final String? mixpanelProjectToken =
-      _getEnv('__APP__MIXPANEL_PROJECT_TOKEN');
-  static final String sentryDsn =
-      _getEnv('__APP__SENTRY_DSN') ?? 'https://foo@bar.ingest.sentry.io/foo';
+  static const String customPairingFunctionUrl =
+      "https://us-central1-$firebaseProjectId.cloudfunctions.net/pairing";
+  static const String firebaseApiKey =
+      "AIzaSyBsORwaBkFp-GjmIyr2oV7M6BUzH5sAkiM";
+  static const String firebaseProjectId = "airdash-4ac74";
+  static const String mixpanelProjectToken = "33381a2c33381a2c33381a2c33381a2c";
+  static const String sentryDsn =
+      "https://216a0a5552cd2571cd658c34670b4177@o4507526597246976.ingest.de.sentry.io/4507526598950992";
 
   static const sendErrorAndAnalyticsLogs = !kDebugMode;
 
   static String getPairingFunctionUrl() {
-    var customUrl = customPairingFunctionUrl;
-    if (customUrl != null) {
-      return customUrl;
-    }
     return 'https://us-central1-$firebaseProjectId.cloudfunctions.net/pairing';
-  }
-
-  static String? _getEnv(String key) {
-    var value = environment[key];
-    return value;
   }
 }

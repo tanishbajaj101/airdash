@@ -2,14 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:airdash/constants/constants.dart';
+import 'package:airdash/core/providers.dart';
+import 'package:appwrite/appwrite.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:firedart/firestore/firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:grpc/grpc.dart';
+import 'package:grpc/grpc.dart' as grpc;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pasteboard/pasteboard.dart';
 import 'package:share_plus/share_plus.dart';
@@ -26,7 +28,6 @@ import '../model/device.dart';
 import '../model/payload.dart';
 import '../model/user.dart';
 import '../model/value_store.dart';
-import '../reporting/analytics_logger.dart';
 import '../reporting/error_logger.dart';
 import '../reporting/logger.dart';
 import '../transfer/connector.dart';
@@ -36,7 +37,6 @@ import 'file_location_dialog.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
-
   @override
   HomeScreenState createState() => HomeScreenState();
 }
@@ -45,8 +45,11 @@ class HomeScreenState extends ConsumerState<HomeScreen>
     with TrayListener, WindowListener {
   Connector? connector;
   final IntentReceiver intentReceiver = IntentReceiver();
-  final signaling = Signaling();
+
   final fileManager = FileManager();
+
+  late final Databases databases;
+  late final Signaling signaling;
   late final ValueStore valueStore;
 
   Device? currentDevice;
@@ -69,7 +72,8 @@ class HomeScreenState extends ConsumerState<HomeScreen>
     windowManager.addListener(this);
     trayManager.addListener(this);
     super.initState();
-
+    databases = ref.watch(appwriteDatabaseProvider);
+    signaling = ref.watch(signalingProvider);
     init();
   }
 
@@ -224,7 +228,6 @@ class HomeScreenState extends ConsumerState<HomeScreen>
     fileManager.cleanUsedFiles(selectedPayload, receivedFiles, transferActive);
 
     try {
-      await Analytics.updateProfile(localDevice.id);
       await updateConnectionConfig();
     } catch (error, stack) {
       ErrorLogger.logStackError('infoUpdateError', error, stack);
@@ -275,11 +278,13 @@ class HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> updateConnectionConfig() async {
-    var doc = await Firestore.instance
-        .collection('appInfo')
-        .document('appInfo')
-        .get();
-    var json = jsonEncode(doc.map);
+    final doc = await databases.getDocument(
+      databaseId: AppwriteConstants.databaseId,
+      collectionId: 'appInfo',
+      documentId: 'appInfo',
+    );
+    // convert this into a map
+    var json = jsonEncode(doc.data);
     var prefs = await SharedPreferences.getInstance();
     prefs.setString('appInfo', json);
     logger('Updated cached appInfo');
@@ -446,7 +451,7 @@ class HomeScreenState extends ConsumerState<HomeScreen>
           showSnackBar(error.userError);
         }
         ErrorLogger.logStackError(error.type, error, stack);
-      } else if (error is GrpcError && error.code == 14) {
+      } else if (error is grpc.GrpcError && error.code == 14) {
         showSnackBar("Sending failed. Try again.");
         ErrorLogger.logStackError('internetSenderError', error, stack);
       } else {
@@ -466,7 +471,6 @@ class HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> openPairingDialog(Device device, BuildContext context) async {
-    AnalyticsEvent.pairingDialogShown.log();
     return showDialog(
         context: context,
         builder: (context) {
@@ -478,12 +482,7 @@ class HomeScreenState extends ConsumerState<HomeScreen>
                   devices.add(receiver);
                   ref.read(selectedDeviceProvider.notifier).setDevice(receiver);
                 });
-                AnalyticsEvent.pairingCompleted.log(<String, String>{
-                  'Device ID': receiver.id,
-                  'Device Name': receiver.name,
-                  'Device OS': receiver.platform ?? '',
-                  'User ID': receiver.userId ?? '',
-                });
+
                 await valueStore.persistState(
                     connector, currentDevice!, devices, ref);
               });
@@ -598,10 +597,7 @@ class HomeScreenState extends ConsumerState<HomeScreen>
         }
       }
     }
-    AnalyticsEvent.payloadSelected.log(<String, dynamic>{
-      'Source': source,
-      ...await payloadProperties(payload),
-    });
+
     setState(() {
       selectedPayload = payload;
     });
@@ -665,11 +661,6 @@ class HomeScreenState extends ConsumerState<HomeScreen>
           }
         }
       }
-      var props = await fileProperties(files);
-      AnalyticsEvent.fileActionTaken.log(<String, dynamic>{
-        'Action': 'Open',
-        ...props,
-      });
     } catch (error, stack) {
       ErrorLogger.logError(SevereLogError(
           'openFileAndFolderError', error, stack, <String, dynamic>{
@@ -760,7 +751,6 @@ class HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void selectFile() {
-    AnalyticsEvent.fileSelectionStarted.log();
     if (Platform.isIOS) {
       openPhotoAndFileBottomSheet();
     } else {
@@ -894,11 +884,6 @@ class HomeScreenState extends ConsumerState<HomeScreen>
         sharePositionOrigin: box.localToGlobal(Offset.zero) & box.size,
       );
     }
-    var props = await fileProperties(files);
-    AnalyticsEvent.fileActionTaken.log(<String, dynamic>{
-      'Action': 'Share',
-      ...props,
-    });
   }
 
   void showDropOverlay() {
@@ -924,11 +909,6 @@ class HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> deleteDevice(Device device) async {
-    AnalyticsEvent.receiverDeleted.log(<String, String>{
-      'Device ID': device.id,
-      'Device Name': device.name,
-      'Device OS': device.platform ?? '',
-    });
     setState(() {
       devices = devices.where((r) => r.id != device.id).toList();
       ref.read(selectedDeviceProvider.notifier).setDevice(devices.firstOrNull);
@@ -981,9 +961,7 @@ class HomeScreenState extends ConsumerState<HomeScreen>
             },
             onTap: () async {
               ref.read(selectedDeviceProvider.notifier).setDevice(it);
-              AnalyticsEvent.receiverSelected.log(<String, dynamic>{
-                ...remoteDeviceProperties(it),
-              });
+
               await valueStore.persistState(
                   connector, currentDevice!, devices, ref);
             },
